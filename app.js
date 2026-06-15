@@ -7,10 +7,10 @@ const COLS = {
   section: "Section",
   shift: "Shift",
   employee: "Employee Name",
-  enroll: "Employee Enroll",
+  enroll: "Employee Enroll",        // ✅ Column F — used for ALL unique counting
   role: "Role",
   taskMin: "Actual Time/ Shift",
-  phaseRemarks: "Phase Remarks"   // Column M
+  phaseRemarks: "Phase Remarks"
 };
 
 const SECTIONS = ["All", "Production SMS", "Production Rolling", "Scrap Management", "Distribution", "Inventory", "Quality"];
@@ -25,14 +25,13 @@ const SECTION_COLORS = {
   "Quality":            "bg-pink-100 text-pink-700"
 };
 
-// 🆕 Helper — true if a phase value should be excluded from the filter pills
 const isAllPhase = v => norm(v).toLowerCase() === "all";
 
 let RAW = [];
 let state = {
   section: "All",
   shift: "All",
-  phase: "",            // Auto-set to first real phase on load
+  phase: "",
   roleSort: "fte",
   roleSearch: "",
   empSearch: ""
@@ -41,6 +40,21 @@ let chartFTE, chartLoad;
 
 function norm(v) {
   return (v === null || v === undefined) ? "" : String(v).trim();
+}
+
+// ✅ NEW HELPER — count unique Employee Enroll values across rows
+function uniqueEnrolls(rows) {
+  const set = new Set();
+  rows.forEach(r => {
+    const e = norm(r[COLS.enroll]);
+    if (e) set.add(e);
+  });
+  return set.size;
+}
+
+// ✅ NEW HELPER — get unique enrolls as array
+function uniqueEnrollList(rows) {
+  return [...new Set(rows.map(r => norm(r[COLS.enroll])).filter(Boolean))];
 }
 
 // ===== STATUS BANNER =====
@@ -59,17 +73,12 @@ async function fetchData() {
   try {
     const res = await fetch(gvizUrl);
     const txt = await res.text();
-    console.log("=== GVIZ raw response (first 300 chars) ===");
-    console.log(txt.substring(0, 300));
-
     const startIdx = txt.indexOf("{");
     const endIdx   = txt.lastIndexOf("}");
     if (startIdx === -1 || endIdx === -1) {
-      throw new Error("Sheet is NOT publicly shared. Google returned an HTML page instead of data. Fix: Share → Anyone with link → Viewer.");
+      throw new Error("Sheet is NOT publicly shared. Fix: Share → Anyone with link → Viewer.");
     }
-
     const json = JSON.parse(txt.substring(startIdx, endIdx + 1));
-
     if (json.status === "error") {
       const msg = (json.errors && json.errors[0] && json.errors[0].detailed_message) || "Unknown sheet error";
       throw new Error("Google API error: " + msg);
@@ -79,8 +88,6 @@ async function fetchData() {
     }
 
     const headers = json.table.cols.map(c => norm(c.label) || norm(c.id));
-    console.log("=== Detected headers ===", headers);
-
     RAW = json.table.rows
       .map(r => {
         const obj = {};
@@ -91,35 +98,26 @@ async function fetchData() {
       })
       .filter(r => norm(r[COLS.employee]) || norm(r[COLS.role]));
 
-    console.log("=== Loaded rows ===", RAW.length);
-    console.log("=== Sample row ===", RAW[0]);
-
     if (RAW.length === 0) {
       const missing = Object.entries(COLS).filter(([k, v]) => !headers.includes(v)).map(([k, v]) => `"${v}"`);
       if (missing.length) {
-        throw new Error("Column header mismatch. Missing in your sheet: " + missing.join(", ") +
-          ". Found in sheet: " + headers.join(", "));
+        throw new Error("Missing columns: " + missing.join(", "));
       }
-      throw new Error("Sheet loaded but 0 employee rows found. Check the data and GID.");
+      throw new Error("Sheet loaded but 0 employee rows found.");
     }
 
-    if (!headers.includes(COLS.phaseRemarks)) {
-      console.warn("⚠️ 'Phase Remarks' column not found in sheet. Phase filter will be empty.");
-    }
-
-    // 🆕 Auto-select first available REAL phase (excluding "All"), if none selected or invalid
+    // Auto-pick first real phase
     const availablePhases = [...new Set(
-      RAW.map(r => norm(r[COLS.phaseRemarks]))
-         .filter(v => v && !isAllPhase(v))     // 🆕 exclude "All"
+      RAW.map(r => norm(r[COLS.phaseRemarks])).filter(v => v && !isAllPhase(v))
     )].sort();
-
     if (!state.phase || !availablePhases.includes(state.phase)) {
       state.phase = availablePhases[0] || "";
     }
 
+    const totalUnique = uniqueEnrolls(RAW);
     setStatus("✅ Last updated: " + new Date().toLocaleString("en-GB", {
       day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit"
-    }) + " · " + RAW.length + " rows");
+    }) + " · " + RAW.length + " task rows · " + totalUnique + " unique employees");
 
     buildFilters();
     render();
@@ -141,24 +139,30 @@ function applyFilters() {
 }
 
 function buildFilters() {
-  // ----- SECTION -----
+  // ----- SECTION (count = unique enrolls) -----
   const sec = document.getElementById("sectionFilters");
   if (sec) {
-    sec.innerHTML = SECTIONS.map(s => `
-      <button data-sec="${s}" class="px-4 py-1 rounded-full text-sm border ${state.section===s?'bg-slate-800 text-white':'bg-white'}">${s}</button>
-    `).join("");
+    sec.innerHTML = SECTIONS.map(s => {
+      // ✅ count unique enrolls per section button
+      const subset = s === "All" ? RAW : RAW.filter(r => norm(r[COLS.section]) === s);
+      const count = uniqueEnrolls(subset);
+      return `<button data-sec="${s}" class="px-4 py-1 rounded-full text-sm border ${state.section===s?'bg-slate-800 text-white':'bg-white'}">${s} <span class="opacity-70">(${count})</span></button>`;
+    }).join("");
     sec.querySelectorAll("button").forEach(b => b.onclick = () => {
       state.section = b.dataset.sec; buildFilters(); render();
     });
   }
 
-  // ----- SHIFT -----
+  // ----- SHIFT (count = unique enrolls) -----
   const shf = document.getElementById("shiftFilters");
   if (shf) {
     shf.innerHTML = SHIFTS.map(s => {
-      const count = s === "All"
-        ? RAW.filter(r => state.section === "All" || norm(r[COLS.section]) === state.section).length
-        : RAW.filter(r => (state.section === "All" || norm(r[COLS.section]) === state.section) && norm(r[COLS.shift]) === s).length;
+      // ✅ unique enrolls per shift, filtered by section
+      const subset = RAW.filter(r =>
+        (state.section === "All" || norm(r[COLS.section]) === state.section) &&
+        (s === "All" || norm(r[COLS.shift]) === s)
+      );
+      const count = uniqueEnrolls(subset);
       return `<button data-shf="${s}" class="px-4 py-1 rounded-full text-sm border ${state.shift===s?'bg-purple-600 text-white':'bg-white'}">${s} <span class="opacity-70">(${count})</span></button>`;
     }).join("");
     shf.querySelectorAll("button").forEach(b => b.onclick = () => {
@@ -166,12 +170,11 @@ function buildFilters() {
     });
   }
 
-  // ----- PHASE REMARKS (no "All" button — 🆕 excludes any "All" value from data) -----
+  // ----- PHASE REMARKS (count = unique enrolls) -----
   const ph = document.getElementById("phaseFilters");
   if (ph) {
     const phases = [...new Set(
-      RAW.map(r => norm(r[COLS.phaseRemarks]))
-         .filter(v => v && !isAllPhase(v))     // 🆕 skip empty AND skip "All"
+      RAW.map(r => norm(r[COLS.phaseRemarks])).filter(v => v && !isAllPhase(v))
     )].sort();
 
     if (phases.length === 0) {
@@ -180,11 +183,13 @@ function buildFilters() {
     }
 
     ph.innerHTML = phases.map(p => {
-      const count = RAW.filter(r =>
+      // ✅ unique enrolls per phase, filtered by section + shift
+      const subset = RAW.filter(r =>
         (state.section === "All" || norm(r[COLS.section]) === state.section) &&
         (state.shift   === "All" || norm(r[COLS.shift])   === state.shift) &&
         norm(r[COLS.phaseRemarks]) === p
-      ).length;
+      );
+      const count = uniqueEnrolls(subset);
       return `<button data-phase="${p}" class="px-4 py-1 rounded-full text-sm border ${state.phase===p?'bg-emerald-600 text-white':'bg-white'}">${p} <span class="opacity-70">(${count})</span></button>`;
     }).join("");
     ph.querySelectorAll("button").forEach(b => b.onclick = () => {
@@ -211,32 +216,42 @@ function loadBar(pct) {
 
 // ===== KPI CARDS =====
 function renderKPIs(data) {
-  const total = data.length;
-  const roles = new Set(data.map(r => norm(r[COLS.role]))).size;
+  // ✅ TOTAL EMPLOYEES = unique Employee Enroll
+  const total = uniqueEnrolls(data);
+  const roles = new Set(data.map(r => norm(r[COLS.role])).filter(Boolean)).size;
   const totalMin = data.reduce((s, r) => s + (Number(r[COLS.taskMin]) || 0), 0);
   const requiredFTE = totalMin / SHIFT_BASELINE;
 
+  // ✅ Role-level — HC = unique enrolls per role
   const roleMap = {};
   data.forEach(r => {
     const k = norm(r[COLS.section]) + "|" + norm(r[COLS.role]);
     if (!roleMap[k]) roleMap[k] = {
       section: norm(r[COLS.section]),
       role: norm(r[COLS.role]),
-      hc: 0,
+      enrolls: new Set(),     // ✅ unique enroll set instead of counter
       min: 0,
       phases: new Set()
     };
-    roleMap[k].hc++;
+    const enroll = norm(r[COLS.enroll]);
+    if (enroll) roleMap[k].enrolls.add(enroll);
     roleMap[k].min += Number(r[COLS.taskMin]) || 0;
     const ph = norm(r[COLS.phaseRemarks]);
-    if (ph && !isAllPhase(ph)) roleMap[k].phases.add(ph);   // 🆕 also skip "All" in role tags
+    if (ph && !isAllPhase(ph)) roleMap[k].phases.add(ph);
   });
-  const roles_ = Object.values(roleMap).map(x => ({
-    ...x,
-    phases: [...x.phases],
-    fte: x.min / SHIFT_BASELINE,
-    load: x.hc ? (x.min / SHIFT_BASELINE) / x.hc * 100 : 0
-  }));
+  const roles_ = Object.values(roleMap).map(x => {
+    const hc = x.enrolls.size;          // ✅ HC = unique enrolls
+    const fte = x.min / SHIFT_BASELINE;
+    return {
+      section: x.section,
+      role: x.role,
+      hc,
+      fte,
+      phases: [...x.phases],
+      load: hc ? (fte / hc) * 100 : 0
+    };
+  });
+
   const overloaded = roles_.filter(r => r.load > 100).length;
   const under = roles_.filter(r => r.load < 60).length;
 
@@ -258,7 +273,7 @@ function renderKPIs(data) {
   const fmt = v => v === null ? "—" : v.toFixed(1) + "%";
 
   document.getElementById("kpiCards").innerHTML = [
-    card("Total Employees", total, "Across 6 sections"),
+    card("Total Employees", total, "Unique Employee Enroll"),  // ✅ updated subtitle
     card("Unique Roles", roles, "Distinct role names", "text-slate-800", tag("All shifts", "bg-blue-50 text-blue-700")),
     card("Required FTE", requiredFTE.toFixed(1), "480 min standard shift", "text-slate-800", tag(`${avgAll.toFixed(1)}% avg load`, "bg-amber-50 text-amber-700")),
     card("Overloaded Roles", overloaded, "Workload > 100%", "text-red-600", tag("Action needed", "bg-red-50 text-red-700")),
@@ -274,16 +289,18 @@ function renderKPIs(data) {
 
 // ===== CHARTS =====
 function renderCharts(data) {
+  // ✅ Headcount per section = unique enrolls per section
   const map = {};
   data.forEach(r => {
     const s = norm(r[COLS.section]); if (!s) return;
-    if (!map[s]) map[s] = { hc: 0, min: 0 };
-    map[s].hc++;
+    if (!map[s]) map[s] = { enrolls: new Set(), min: 0 };
+    const e = norm(r[COLS.enroll]);
+    if (e) map[s].enrolls.add(e);
     map[s].min += Number(r[COLS.taskMin]) || 0;
   });
   const labels = Object.keys(map);
   const fte = labels.map(l => +(map[l].min / SHIFT_BASELINE).toFixed(1));
-  const hc  = labels.map(l => map[l].hc);
+  const hc  = labels.map(l => map[l].enrolls.size);   // ✅ unique enroll count
 
   if (chartFTE) chartFTE.destroy();
   chartFTE = new Chart(document.getElementById("chartFTE"), {
@@ -295,16 +312,21 @@ function renderCharts(data) {
     options: { responsive: true, plugins: { legend: { position: "top" } } }
   });
 
+  // ✅ Load per section (using unique enrolls per role)
   const loads = labels.map(l => {
     const rows = data.filter(r => norm(r[COLS.section]) === l);
     const roleMap = {};
     rows.forEach(r => {
       const k = norm(r[COLS.role]);
-      if (!roleMap[k]) roleMap[k] = { hc: 0, min: 0 };
-      roleMap[k].hc++;
+      if (!roleMap[k]) roleMap[k] = { enrolls: new Set(), min: 0 };
+      const e = norm(r[COLS.enroll]);
+      if (e) roleMap[k].enrolls.add(e);
       roleMap[k].min += Number(r[COLS.taskMin]) || 0;
     });
-    const arr = Object.values(roleMap).map(x => x.hc ? (x.min / SHIFT_BASELINE) / x.hc * 100 : 0);
+    const arr = Object.values(roleMap).map(x => {
+      const hc = x.enrolls.size;
+      return hc ? (x.min / SHIFT_BASELINE) / hc * 100 : 0;
+    });
     return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
   });
 
@@ -366,9 +388,13 @@ function renderEmployeeTable(data) {
     norm(r[COLS.employee]).toLowerCase().includes(q) ||
     norm(r[COLS.role]).toLowerCase().includes(q) ||
     norm(r[COLS.section]).toLowerCase().includes(q) ||
+    norm(r[COLS.enroll]).toLowerCase().includes(q) ||
     norm(r[COLS.phaseRemarks]).toLowerCase().includes(q));
 
-  document.getElementById("empCount").textContent = rows.length + " employees";
+  // ✅ Count = unique enrolls (not row count)
+  const uniqueEmp = uniqueEnrolls(rows);
+  document.getElementById("empCount").textContent =
+    uniqueEmp + " unique employees · " + rows.length + " task rows";
 
   rows.sort((a, b) => (Number(b[COLS.taskMin]) || 0) - (Number(a[COLS.taskMin]) || 0));
 
@@ -378,7 +404,6 @@ function renderEmployeeTable(data) {
     const load = fte * 100;
     const sec = norm(r[COLS.section]);
     const phase = norm(r[COLS.phaseRemarks]);
-    // 🆕 Don't display "All" as a phase tag (treat as empty)
     const showPhase = phase && !isAllPhase(phase);
     return `<tr class="border-t hover:bg-slate-50">
       <td class="p-2"><span class="px-2 py-0.5 rounded text-xs ${SECTION_COLORS[sec] || 'bg-slate-100'}">${sec}</span></td>

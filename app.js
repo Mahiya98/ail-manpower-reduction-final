@@ -25,18 +25,23 @@ const SECTION_COLORS = {
   "Quality":            "bg-pink-100 text-pink-700"
 };
 
+// 🆕 Helper — true if a phase value should be excluded from the filter pills
+const isAllPhase = v => norm(v).toLowerCase() === "all";
+
 let RAW = [];
 let state = {
   section: "All",
   shift: "All",
-  phase: "",             // 🆕 No "All" — auto-set to first phase on load
+  phase: "",            // Auto-set to first real phase on load
   roleSort: "fte",
   roleSearch: "",
   empSearch: ""
 };
 let chartFTE, chartLoad;
 
-const norm = v => (v === null || v === undefined) ? "" : String(v).trim();
+function norm(v) {
+  return (v === null || v === undefined) ? "" : String(v).trim();
+}
 
 // ===== STATUS BANNER =====
 function setStatus(msg, isError = false) {
@@ -102,8 +107,12 @@ async function fetchData() {
       console.warn("⚠️ 'Phase Remarks' column not found in sheet. Phase filter will be empty.");
     }
 
-    // 🆕 Auto-select first available phase if none selected (or selected one no longer exists)
-    const availablePhases = [...new Set(RAW.map(r => norm(r[COLS.phaseRemarks])).filter(Boolean))].sort();
+    // 🆕 Auto-select first available REAL phase (excluding "All"), if none selected or invalid
+    const availablePhases = [...new Set(
+      RAW.map(r => norm(r[COLS.phaseRemarks]))
+         .filter(v => v && !isAllPhase(v))     // 🆕 exclude "All"
+    )].sort();
+
     if (!state.phase || !availablePhases.includes(state.phase)) {
       state.phase = availablePhases[0] || "";
     }
@@ -126,7 +135,7 @@ function applyFilters() {
   return RAW.filter(r => {
     if (state.section !== "All" && norm(r[COLS.section]) !== state.section) return false;
     if (state.shift   !== "All" && norm(r[COLS.shift])   !== state.shift)   return false;
-    if (state.phase && norm(r[COLS.phaseRemarks]) !== state.phase) return false;  // 🆕 always required if set
+    if (state.phase && norm(r[COLS.phaseRemarks]) !== state.phase) return false;
     return true;
   });
 }
@@ -157,11 +166,12 @@ function buildFilters() {
     });
   }
 
-  // ----- 🆕 PHASE REMARKS (no "All" button) -----
+  // ----- PHASE REMARKS (no "All" button — 🆕 excludes any "All" value from data) -----
   const ph = document.getElementById("phaseFilters");
   if (ph) {
     const phases = [...new Set(
-      RAW.map(r => norm(r[COLS.phaseRemarks])).filter(Boolean)
+      RAW.map(r => norm(r[COLS.phaseRemarks]))
+         .filter(v => v && !isAllPhase(v))     // 🆕 skip empty AND skip "All"
     )].sort();
 
     if (phases.length === 0) {
@@ -219,7 +229,7 @@ function renderKPIs(data) {
     roleMap[k].hc++;
     roleMap[k].min += Number(r[COLS.taskMin]) || 0;
     const ph = norm(r[COLS.phaseRemarks]);
-    if (ph) roleMap[k].phases.add(ph);
+    if (ph && !isAllPhase(ph)) roleMap[k].phases.add(ph);   // 🆕 also skip "All" in role tags
   });
   const roles_ = Object.values(roleMap).map(x => ({
     ...x,
@@ -368,6 +378,8 @@ function renderEmployeeTable(data) {
     const load = fte * 100;
     const sec = norm(r[COLS.section]);
     const phase = norm(r[COLS.phaseRemarks]);
+    // 🆕 Don't display "All" as a phase tag (treat as empty)
+    const showPhase = phase && !isAllPhase(phase);
     return `<tr class="border-t hover:bg-slate-50">
       <td class="p-2"><span class="px-2 py-0.5 rounded text-xs ${SECTION_COLORS[sec] || 'bg-slate-100'}">${sec}</span></td>
       <td class="p-2 text-center"><span class="px-2 py-0.5 rounded-full text-xs bg-purple-50">${norm(r[COLS.shift])}</span></td>
@@ -377,7 +389,7 @@ function renderEmployeeTable(data) {
       <td class="p-2 text-center font-mono">${min}</td>
       <td class="p-2 text-center font-mono ${load>100?'text-red-600':load<60?'text-green-600':'text-amber-600'}">${fte.toFixed(2)}</td>
       <td class="p-2 w-40">${loadBar(load)}</td>
-      <td class="p-2">${phase ? `<span class="px-2 py-0.5 rounded text-xs bg-emerald-50 text-emerald-700">${phase}</span>` : '<span class="text-slate-400">—</span>'}</td>
+      <td class="p-2">${showPhase ? `<span class="px-2 py-0.5 rounded text-xs bg-emerald-50 text-emerald-700">${phase}</span>` : '<span class="text-slate-400">—</span>'}</td>
     </tr>`;
   }).join("") || `<tr><td colspan="9" class="p-4 text-center text-slate-400">No employees match.</td></tr>`;
 }

@@ -10,7 +10,7 @@ const COLS = {
   enroll: "Employee Enroll",
   role: "Role",
   taskMin: "Actual Time/ Shift",
-  phaseRemarks: "Phase Remarks"   // 🆕 Column M
+  phaseRemarks: "Phase Remarks"   // Column M
 };
 
 const SECTIONS = ["All", "Production SMS", "Production Rolling", "Scrap Management", "Distribution", "Inventory", "Quality"];
@@ -29,7 +29,7 @@ let RAW = [];
 let state = {
   section: "All",
   shift: "All",
-  phase: "All",          // 🆕 NEW
+  phase: "",             // 🆕 No "All" — auto-set to first phase on load
   roleSort: "fte",
   roleSearch: "",
   empSearch: ""
@@ -98,9 +98,14 @@ async function fetchData() {
       throw new Error("Sheet loaded but 0 employee rows found. Check the data and GID.");
     }
 
-    // Soft warning if Phase Remarks column missing but other data exists
     if (!headers.includes(COLS.phaseRemarks)) {
       console.warn("⚠️ 'Phase Remarks' column not found in sheet. Phase filter will be empty.");
+    }
+
+    // 🆕 Auto-select first available phase if none selected (or selected one no longer exists)
+    const availablePhases = [...new Set(RAW.map(r => norm(r[COLS.phaseRemarks])).filter(Boolean))].sort();
+    if (!state.phase || !availablePhases.includes(state.phase)) {
+      state.phase = availablePhases[0] || "";
     }
 
     setStatus("✅ Last updated: " + new Date().toLocaleString("en-GB", {
@@ -121,7 +126,7 @@ function applyFilters() {
   return RAW.filter(r => {
     if (state.section !== "All" && norm(r[COLS.section]) !== state.section) return false;
     if (state.shift   !== "All" && norm(r[COLS.shift])   !== state.shift)   return false;
-    if (state.phase   !== "All" && norm(r[COLS.phaseRemarks]) !== state.phase) return false;  // 🆕
+    if (state.phase && norm(r[COLS.phaseRemarks]) !== state.phase) return false;  // 🆕 always required if set
     return true;
   });
 }
@@ -152,25 +157,24 @@ function buildFilters() {
     });
   }
 
-  // ----- 🆕 PHASE REMARKS -----
+  // ----- 🆕 PHASE REMARKS (no "All" button) -----
   const ph = document.getElementById("phaseFilters");
   if (ph) {
-    const uniquePhases = [...new Set(
+    const phases = [...new Set(
       RAW.map(r => norm(r[COLS.phaseRemarks])).filter(Boolean)
     )].sort();
-    const phases = ["All", ...uniquePhases];
+
+    if (phases.length === 0) {
+      ph.innerHTML = `<span class="text-xs text-slate-400 italic">No phase remarks found</span>`;
+      return;
+    }
 
     ph.innerHTML = phases.map(p => {
-      const count = p === "All"
-        ? RAW.filter(r =>
-            (state.section === "All" || norm(r[COLS.section]) === state.section) &&
-            (state.shift   === "All" || norm(r[COLS.shift])   === state.shift)
-          ).length
-        : RAW.filter(r =>
-            (state.section === "All" || norm(r[COLS.section]) === state.section) &&
-            (state.shift   === "All" || norm(r[COLS.shift])   === state.shift) &&
-            norm(r[COLS.phaseRemarks]) === p
-          ).length;
+      const count = RAW.filter(r =>
+        (state.section === "All" || norm(r[COLS.section]) === state.section) &&
+        (state.shift   === "All" || norm(r[COLS.shift])   === state.shift) &&
+        norm(r[COLS.phaseRemarks]) === p
+      ).length;
       return `<button data-phase="${p}" class="px-4 py-1 rounded-full text-sm border ${state.phase===p?'bg-emerald-600 text-white':'bg-white'}">${p} <span class="opacity-70">(${count})</span></button>`;
     }).join("");
     ph.querySelectorAll("button").forEach(b => b.onclick = () => {
@@ -210,7 +214,7 @@ function renderKPIs(data) {
       role: norm(r[COLS.role]),
       hc: 0,
       min: 0,
-      phases: new Set()        // 🆕 collect phases per role
+      phases: new Set()
     };
     roleMap[k].hc++;
     roleMap[k].min += Number(r[COLS.taskMin]) || 0;
@@ -219,7 +223,7 @@ function renderKPIs(data) {
   });
   const roles_ = Object.values(roleMap).map(x => ({
     ...x,
-    phases: [...x.phases],     // 🆕 array for display
+    phases: [...x.phases],
     fte: x.min / SHIFT_BASELINE,
     load: x.hc ? (x.min / SHIFT_BASELINE) / x.hc * 100 : 0
   }));
@@ -308,7 +312,7 @@ function renderRoleTable(roles_) {
   let rows = roles_.filter(r => !q ||
     r.role.toLowerCase().includes(q) ||
     r.section.toLowerCase().includes(q) ||
-    r.phases.join(" ").toLowerCase().includes(q));   // 🆕 search by phase
+    r.phases.join(" ").toLowerCase().includes(q));
 
   rows.sort((a, b) => state.roleSort === "fte" ? b.fte - a.fte : b.load - a.load);
 
@@ -352,7 +356,7 @@ function renderEmployeeTable(data) {
     norm(r[COLS.employee]).toLowerCase().includes(q) ||
     norm(r[COLS.role]).toLowerCase().includes(q) ||
     norm(r[COLS.section]).toLowerCase().includes(q) ||
-    norm(r[COLS.phaseRemarks]).toLowerCase().includes(q));   // 🆕 search by phase
+    norm(r[COLS.phaseRemarks]).toLowerCase().includes(q));
 
   document.getElementById("empCount").textContent = rows.length + " employees";
 

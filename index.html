@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>FTE Workload Dashboard — Akij Ispat Ltd</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body class="bg-slate-50 text-slate-800">
+  <!-- Header -->
+  <header class="flex flex-wrap items-center justify-between gap-2 p-4 border-b bg-white sticky top-0 z-10">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-lg bg-indigo-900 text-white flex items-center justify-center font-bold">AIL</div>
+      <div>
+        <h1 class="font-bold text-lg">FTE Workload Dashboard</h1>
+        <p class="text-xs text-slate-500">AROPEX · Akij Ispat Ltd — Live Google Sheets</p>
+      </div>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <span class="px-3 py-1 border rounded-lg text-sm flex items-center gap-1">
+        <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span> Live
+      </span>
+      <button id="refreshBtn" class="px-3 py-1 border rounded-lg text-sm bg-blue-50">⟳ Refresh</button>
+    </div>
+  </header>
+
+  <main class="p-4 md:p-6 space-y-6 max-w-[1400px] mx-auto">
+    <p id="lastUpdated" class="text-right text-xs text-slate-500"></p>
+
+    <!-- Filters -->
+    <section>
+      <div class="flex flex-wrap items-center gap-2 mb-2">
+        <span class="text-xs font-semibold text-slate-500 mr-2">SECTION</span>
+        <div id="sectionFilters" class="flex flex-wrap gap-2"></div>
+      </div>
+      <div class="flex flex-wrap items-center gap-2 mb-2">
+        <span class="text-xs font-semibold text-slate-500 mr-2">SHIFT</span>
+        <div id="shiftFilters" class="flex flex-wrap gap-2"></div>
+      </div>
+      <!-- 🆕 NEW: Phase Remarks Filter -->
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="text-xs font-semibold text-slate-500 mr-2">PHASE REMARKS</span>
+        <div id="phaseFilters" class="flex flex-wrap gap-2"></div>
+      </div>
+    </section>
+
+    <!-- KPI Cards -->
+    <section id="kpiCards" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-9 gap-3"></section>
+
+    <!-- Charts -->
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div class="bg-white p-4 rounded-xl shadow-sm border">
+        <h3 class="font-semibold mb-2">FTE required vs headcount by section</h3>
+        <canvas id="chartFTE"></canvas>
+      </div>
+      <div class="bg-white p-4 rounded-xl shadow-sm border">
+        <h3 class="font-semibold mb-2">Average workload % by section</h3>
+        <canvas id="chartLoad"></canvas>
+      </div>
+    </section>
+
+    <!-- Role-level FTE & Capacity Alerts -->
+    <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div class="lg:col-span-2 bg-white p-4 rounded-xl shadow-sm border">
+        <div class="flex justify-between items-center mb-2">
+          <h3 class="font-semibold">Role-level FTE</h3>
+          <span class="text-xs text-slate-500">FTE = Total task time ÷ 480 min</span>
+        </div>
+        <input id="roleSearch" type="text" placeholder="Search role, section or phase..."
+               class="w-full p-2 border rounded-lg mb-3 bg-slate-50" />
+        <div class="flex gap-2 mb-3">
+          <button id="sortFTE" class="px-3 py-1 text-sm border rounded-lg bg-blue-50">FTE ↓</button>
+          <button id="sortLoad" class="px-3 py-1 text-sm border rounded-lg">Load %</button>
+        </div>
+        <div class="overflow-x-auto max-h-[500px] overflow-y-auto">
+          <table class="w-full text-sm">
+            <thead class="text-xs text-slate-500 uppercase sticky top-0 bg-white">
+              <tr>
+                <th class="text-left p-2">Section</th>
+                <th class="text-left p-2">Role</th>
+                <th class="p-2">HC</th>
+                <th class="p-2">FTE</th>
+                <th class="p-2 text-left">Workload</th>
+                <th class="p-2 text-left">Phase</th>
+              </tr>
+            </thead>
+            <tbody id="roleTable"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="bg-white p-4 rounded-xl shadow-sm border">
+        <div class="flex justify-between items-center mb-3">
+          <h3 class="font-semibold">Capacity alerts</h3>
+          <span class="text-xs text-slate-500">roles needing attention</span>
+        </div>
+        <div id="alerts" class="space-y-2 max-h-[500px] overflow-y-auto"></div>
+      </div>
+    </section>
+
+    <!-- Employee Workload -->
+    <section class="bg-white p-4 rounded-xl shadow-sm border">
+      <div class="flex justify-between items-center mb-2">
+        <h3 class="font-semibold">Employee workload</h3>
+        <span id="empCount" class="text-xs text-slate-500"></span>
+      </div>
+      <input id="empSearch" type="text" placeholder="Search name, role, section or phase..."
+             class="w-full p-2 border rounded-lg mb-3 bg-slate-50" />
+      <div class="overflow-x-auto max-h-[600px] overflow-y-auto">
+        <table class="w-full text-sm">
+          <thead class="text-xs text-slate-500 uppercase sticky top-0 bg-white">
+            <tr>
+              <th class="text-left p-2">Section</th>
+              <th class="p-2">Shift</th>
+              <th class="text-left p-2">Employee</th>
+              <th class="p-2">Enroll</th>
+              <th class="text-left p-2">Role</th>
+              <th class="p-2">Task Min</th>
+              <th class="p-2">FTE</th>
+              <th class="text-left p-2">Workload</th>
+              <th class="text-left p-2">Phase Remarks</th>
+            </tr>
+          </thead>
+          <tbody id="empTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="text-center text-xs text-slate-400 pt-4 pb-2">
+      © Akij Ispat Ltd · AROPEX · FTE Workload Dashboard
+    </footer>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
